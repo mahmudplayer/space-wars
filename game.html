@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<title>Mekik Oyunu - Hayatta Kalma Senaryosu</title>
+<style>
+  body {
+    margin: 0;
+    overflow: hidden;
+    background: url('uzy.png') no-repeat center center fixed;
+    background-size: cover;
+    font-family: sans-serif;
+    user-select: none;
+  }
+  canvas {
+    display: block;
+    margin: 0 auto;
+    background: transparent;
+  }
+  #score {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    color: white;
+    font-size: 24px;
+  }
+  #health {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    display: flex;
+    gap: 5px;
+  }
+  .heart {
+    width: 30px;
+    height: 30px;
+    background: red;
+  }
+  #planetStatus {
+    position: absolute;
+    top: 50px;
+    right: 10px;
+    color: white;
+    font-size: 20px;
+  }
+  #pauseBtn {
+    position: absolute;
+    top: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 40px;
+    height: 40px;
+    cursor: pointer;
+  }
+  #gameOver {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: white;
+    font-size: 32px;
+    display: none;
+    text-align: center;
+  }
+  #reason {
+    font-size: 20px;
+    color: #ff7070;
+    margin-bottom: 10px;
+  }
+  #restart {
+    margin-top: 20px;
+    padding: 10px 20px;
+    font-size: 20px;
+  }
+  /* 🎬 Altyazı (senaryo metni) */
+  #storyText {
+    position: absolute;
+    bottom: 40px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: #ffffff;
+    background: rgba(0,0,0,0.6);
+    padding: 12px 20px;
+    border-radius: 10px;
+    font-size: 20px;
+    text-align: center;
+    display: none;
+  }
+</style>
+</head>
+<body>
+<div id="score">Skor: 0</div>
+<div id="health">
+  <div class="heart"></div>
+  <div class="heart"></div>
+  <div class="heart"></div>
+</div>
+<div id="planetStatus">Gezegen: %100</div>
+<img id="pauseBtn" src="dur.png" alt="Dur/Devam">
+<div id="gameOver">
+  <div id="reason"></div>
+  Oyun Bitti!<br>
+  Skorunuz: <span id="finalScore">0</span><br>
+  <button id="restart">Yeniden Başlat</button>
+</div>
+<div id="storyText"></div>
+<canvas id="gameCanvas" width="800" height="600"></canvas>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+const playerImg = new Image(); playerImg.src = 'mkk.png';
+const bulletImg = new Image(); bulletImg.src = 'fz.png';
+const boomImg = new Image(); boomImg.src = 'boom.png';
+const heartPackImg = new Image(); heartPackImg.src = 'hp.png';
+const enemyImgs = [new Image(), new Image()];
+enemyImgs[0].src = 'ds2.png';
+enemyImgs[1].src = 'ds6.png';
+
+const player = { x: 400, y: 500, width: 50, height: 50 };
+let bullets = [], enemies = [], enemyBullets = [], healthPacks = [], explosions = [];
+let score = 0, health = 3, planetHealth = 100;
+let gameOver = false, loseReason = "", paused = false;
+let mouse = { x: canvas.width / 2, y: canvas.height / 2 };
+
+const pauseBtn = document.getElementById('pauseBtn');
+const storyBox = document.getElementById('storyText');
+
+// --- Mouse kontrolü ve ateş ---
+document.addEventListener("mousemove", e => {
+  const rect = canvas.getBoundingClientRect();
+  mouse.x = e.clientX - rect.left;
+  mouse.y = e.clientY - rect.top;
+});
+
+canvas.addEventListener("mousedown", e => {
+  if (e.button === 0 && !gameOver && !paused) {
+    const dx = mouse.x - (player.x + player.width / 2);
+    const dy = mouse.y - (player.y);
+    const angle = Math.atan2(dy, dx);
+    const speed = 6;
+    bullets.push({
+      x: player.x + player.width / 2,
+      y: player.y,
+      width: 15,
+      height: 30,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      angle: angle
+    });
+  }
+});
+
+// --- Dur / Devam ---
+pauseBtn.addEventListener("click", () => {
+  paused = !paused;
+  pauseBtn.src = paused ? "devam.png" : "dur.png";
+  if (!paused) gameLoop();
+});
+
+// --- Hareket ---
+let keys = {};
+document.addEventListener('keydown', e => keys[e.key.toLowerCase()] = true);
+document.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+
+// --- Düşman üret ---
+function spawnEnemies() {
+  if (gameOver) return;
+  let imgIndex = Math.floor(Math.random() * enemyImgs.length);
+  let enemy = {
+    x: Math.random() * (canvas.width - 50),
+    y: -50,
+    width: 50,
+    height: 50,
+    img: enemyImgs[imgIndex],
+    fireRate: imgIndex === 0 ? 4000 : 2000,
+    lastFire: Date.now()
+  };
+  enemies.push(enemy);
+  setTimeout(spawnEnemies, Math.random() * 2000 + 1000);
+}
+
+function fireEnemyBullet(enemy) {
+  const dx = player.x - enemy.x;
+  const dy = player.y - enemy.y;
+  const angle = Math.atan2(dy, dx);
+  const speed = 3;
+  enemyBullets.push({
+    x: enemy.x + enemy.width / 2,
+    y: enemy.y + enemy.height / 2,
+    width: 10,
+    height: 20,
+    vx: Math.cos(angle) * speed,
+    vy: Math.sin(angle) * speed,
+    angle
+  });
+}
+
+// --- Altyazı Sistemi (Senaryo) ---
+function showStory(text, duration = 4000) {
+  storyBox.style.display = "block";
+  storyBox.innerText = text;
+  setTimeout(() => {
+    storyBox.style.display = "none";
+  }, duration);
+}
+
+// --- 1 Dakika Hayatta Kalma Olayı ---
+setTimeout(() => {
+  if (gameOver) return;
+  paused = true;
+  pauseBtn.src = "devam.png";
+  showStory("1 dk hayatta kaldığın için başka bir gezegenden gelen destek ekibi dünyayı onardı.", 5000);
+
+  setTimeout(() => {
+    showStory("10 sn sonra düşmanlar gelmeye hazırlanacak...", 4000);
+    setTimeout(() => {
+      showStory("Bu süre içinde yedek motoru çalıştırıp diğerini onarıma aldın. Bu sana %66,6 güç verecek.", 5000);
+      planetHealth += 30;
+      if (planetHealth > 100) planetHealth = 100;
+      document.getElementById('planetStatus').innerText = 'Gezegen: %' + planetHealth;
+
+      setTimeout(() => {
+        showStory("Gezegen hala yaşanılabilir durumda! Onarılan motor yedeğiyle değiştirildi.", 5000);
+        setTimeout(() => {
+          paused = false;
+          pauseBtn.src = "dur.png";
+          spawnEnemies();
+          gameLoop();
+        }, 4000);
+      }, 5000);
+    }, 4000);
+  }, 5000);
+}, 60000); // 1 dk sonra tetiklenir
+
+// --- Güncelle ---
+function update() {
+  if (gameOver || paused) return;
+  const moveSpeed = 5;
+  const yLimit = canvas.height * 0.75;
+  const lowerLimit = canvas.height - player.height;
+  if (keys['a'] || keys['arrowleft']) player.x -= moveSpeed;
+  if (keys['d'] || keys['arrowright']) player.x += moveSpeed;
+  if (keys['w'] || keys['arrowup']) player.y -= moveSpeed;
+  if (keys['s'] || keys['arrowdown']) player.y += moveSpeed;
+  if (player.x < 0) player.x = 0;
+  if (player.x + player.width > canvas.width) player.x = canvas.width - player.width;
+  if (player.y < yLimit) player.y = yLimit;
+  if (player.y > lowerLimit) player.y = lowerLimit;
+
+  bullets.forEach((b, i) => {
+    b.x += b.vx;
+    b.y += b.vy;
+    if (b.y < -b.height || b.x < 0 || b.x > canvas.width) bullets.splice(i, 1);
+  });
+
+  enemyBullets.forEach((eb, i) => {
+    eb.x += eb.vx;
+    eb.y += eb.vy;
+    if (eb.y > canvas.height || eb.x < 0 || eb.x > canvas.width) enemyBullets.splice(i, 1);
+  });
+
+  enemies.forEach((e, i) => {
+    e.y += 2;
+    if (Date.now() - e.lastFire > e.fireRate) {
+      fireEnemyBullet(e);
+      e.lastFire = Date.now();
+    }
+
+    if (e.y + e.height >= canvas.height) {
+      explosions.push({ x: e.x, y: canvas.height - 60, timer: 30 });
+      enemies.splice(i, 1);
+      planetHealth -= 10;
+      if (planetHealth < 0) planetHealth = 0;
+      document.getElementById('planetStatus').innerText = 'Gezegen: %' + planetHealth;
+      if (planetHealth <= 0) {
+        loseReason = "Gezegen koruma başarısız";
+        endGame();
+      }
+    }
+
+    bullets.forEach((b, j) => {
+      if (b.x < e.x + e.width && b.x + b.width > e.x &&
+          b.y < e.y + e.height && b.y + b.height > e.y) {
+        bullets.splice(j, 1);
+        enemies.splice(i, 1);
+        explosions.push({ x: e.x, y: e.y, timer: 30 });
+        score += 10;
+        if (Math.random() < 0.09) {
+          healthPacks.push({ x: e.x + 10, y: e.y + 10, width: 30, height: 30, speed: 2 });
+        }
+      }
+    });
+  });
+
+  healthPacks.forEach((hp, i) => {
+    hp.y += hp.speed;
+    if (hp.y > canvas.height) healthPacks.splice(i, 1);
+    if (hp.x < player.x + player.width && hp.x + hp.width > player.x &&
+        hp.y < player.y + player.height && hp.y + hp.height > player.y) {
+      healthPacks.splice(i, 1);
+      if (health < 3) {
+        document.querySelectorAll('.heart')[health].style.background = 'red';
+        health++;
+      }
+    }
+  });
+
+  enemyBullets.forEach((eb, i) => {
+    if (eb.x < player.x + player.width && eb.x + eb.width > player.x &&
+        eb.y < player.y + player.height && eb.y + eb.height > player.y) {
+      explosions.push({ x: player.x, y: player.y, timer: 30 });
+      enemyBullets.splice(i, 1);
+      health--;
+      document.querySelectorAll('.heart')[health].style.background = 'gray';
+      if (health <= 0) {
+        loseReason = "Uzay mekiğiniz yok edildi";
+        endGame();
+      }
+    }
+  });
+
+  explosions.forEach((ex, i) => {
+    ex.timer--;
+    if (ex.timer <= 0) explosions.splice(i, 1);
+  });
+
+  document.getElementById('score').innerText = 'Skor: ' + score;
+}
+
+// --- Çizim ---
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(playerImg, player.x, player.y, player.width, player.height);
+  bullets.forEach(b => {
+    ctx.save();
+    ctx.translate(b.x, b.y);
+    ctx.rotate(b.angle + Math.PI / 2);
+    ctx.drawImage(bulletImg, -b.width / 2, -b.height / 2, b.width, b.height);
+    ctx.restore();
+  });
+  enemies.forEach(e => ctx.drawImage(e.img, e.x, e.y, e.width, e.height));
+  enemyBullets.forEach(eb => {
+    ctx.save();
+    ctx.translate(eb.x, eb.y);
+    ctx.rotate(eb.angle + Math.PI / 2);
+    ctx.fillStyle = "orange";
+    ctx.fillRect(-eb.width / 2, -eb.height / 2, eb.width, eb.height);
+    ctx.restore();
+  });
+  healthPacks.forEach(hp => ctx.drawImage(heartPackImg, hp.x, hp.y, hp.width, hp.height));
+  explosions.forEach(ex => ctx.drawImage(boomImg, ex.x, ex.y, 60, 60));
+}
+
+function gameLoop() {
+  if (gameOver || paused) return;
+  update();
+  draw();
+  requestAnimationFrame(gameLoop);
+}
+
+function endGame() {
+  gameOver = true;
+  document.getElementById('reason').innerText = loseReason;
+  document.getElementById('finalScore').innerText = score;
+  document.getElementById('gameOver').style.display = 'block';
+}
+
+document.getElementById('restart').addEventListener('click', () => location.reload());
+
+// Başlat
+spawnEnemies();
+gameLoop();
+</script>
+</body>
+</html>
